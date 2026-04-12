@@ -1,0 +1,69 @@
+{
+  "name": "planeexport",
+  "displayName": "PlaneExport",
+  "description": "Watches for plan files, parses them into ordered tasks, and exports them to a hoverchart GitHub Control Panel space.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "hoverchart.exportPlan",
+        "title": "Hoverchart: Export Plan"
+      },
+      {
+        "command": "hoverchart.configure",
+        "title": "Hoverchart: Configure"
+      },
+      {
+        "command": "hoverchart.login",
+        "title": "Hoverchart: Login"
+      }
+    ],
+    "configuration": {
+      "title": "Hoverchart",
+      "properties": {
+        "hoverchart.spaceId": {
+          "type": "string",
+          "default": "",
+          "description": "The ID of the hoverchart space to export tasks to."
+        },
+        "hoverchart.spaceOwnerId": {
+          "type": "string",
+          "default": "",
+          "description": "The user ID of the owner of the hoverchart space."
+        },
+        "hoverchart.firebaseApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "The Firebase Web API key used for authentication."
+        },
+        "hoverchart.googleClientId": {
+          "type": "string",
+          "default": "",
+          "description": "The Google OAuth client ID for login."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.js --production",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.3"
+  }
+}
