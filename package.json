@@ -40,21 +40,6 @@
           "type": "string",
           "default": "",
           "description": "The user ID of the owner of the hoverchart space."
-        },
-        "hoverchart.firebaseApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "The Firebase Web API key used for authentication."
-        },
-        "hoverchart.googleClientId": {
-          "type": "string",
-          "default": "",
-          "description": "The Google OAuth client ID for login."
-        },
-        "hoverchart.firebaseProjectId": {
-          "type": "string",
-          "default": "hoverchart",
-          "description": "The Firebase project ID used for Firestore REST API calls."
         }
       }
     }

@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as http from "http";
 import * as crypto from "crypto";
 import { URL } from "url";
+import { FIREBASE_API_KEY, GOOGLE_OAUTH_CLIENT_ID } from "./constants.js";
 
 const SECRET_KEY_ID_TOKEN = "hoverchart.idToken";
 const SECRET_KEY_REFRESH_TOKEN = "hoverchart.refreshToken";
@@ -18,16 +19,8 @@ const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/callback`;
  * 3. Exchanging the code for a Firebase ID token via the REST API.
  */
 export async function login(context: vscode.ExtensionContext): Promise<void> {
-  const config = vscode.workspace.getConfiguration("hoverchart");
-  const apiKey = config.get<string>("firebaseApiKey") ?? "";
-  const clientId = config.get<string>("googleClientId") ?? "";
-
-  if (!apiKey || !clientId) {
-    vscode.window.showErrorMessage(
-      "Hoverchart: Please set hoverchart.firebaseApiKey and hoverchart.googleClientId in settings before logging in."
-    );
-    return;
-  }
+  const apiKey = FIREBASE_API_KEY;
+  const clientId = GOOGLE_OAUTH_CLIENT_ID;
 
   const state = crypto.randomBytes(16).toString("hex");
 
@@ -188,12 +181,7 @@ export async function getIdToken(
     return undefined;
   }
 
-  const config = vscode.workspace.getConfiguration("hoverchart");
-  const apiKey = config.get<string>("firebaseApiKey") ?? "";
-
-  if (!apiKey) {
-    return undefined;
-  }
+  const apiKey = FIREBASE_API_KEY;
 
   try {
     const refreshed = await fetchJson<{
