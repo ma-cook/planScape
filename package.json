@@ -50,6 +50,11 @@
           "type": "string",
           "default": "",
           "description": "The Google OAuth client ID for login."
+        },
+        "hoverchart.firebaseProjectId": {
+          "type": "string",
+          "default": "hoverchart",
+          "description": "The Firebase project ID used for Firestore REST API calls."
         }
       }
     }

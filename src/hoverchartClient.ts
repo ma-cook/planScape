@@ -1,17 +1,29 @@
 import * as vscode from "vscode";
 import { PlanTask } from "./planParser.js";
+import { getUserId } from "./auth.js";
+import { getConfig } from "./config.js";
 
 const BULK_IMPORT_URL = "https://bulkimport-qtk2xsi74a-uc.a.run.app";
+
+/** Hoverchart spatial partitioning cell size (matches src/services/spatialPartitioning.js). */
+const CELL_SIZE = 6667;
 
 /**
  * The shape of a single TextObject as expected by the bulkImport Cloud Function.
  */
 interface TextObject {
-  type: "TextObject";
-  text: string;
-  description: string;
-  position: { x: number; y: number; z: number };
-  index: number;
+  id: string;
+  cellId: string;
+  position: number[];
+  scale: number[];
+  type: string;
+  color: string;
+  content: string;
+  createdAt: number;
+  headerText?: string;
+  headerStyle?: object;
+  textStyle?: object;
+  merfolkData?: object;
 }
 
 /**
@@ -19,51 +31,195 @@ interface TextObject {
  */
 interface BulkImportRequest {
   idToken: string;
+  userId: string;
   spaceId: string;
-  spaceOwnerId: string;
   objects: TextObject[];
+  connections: unknown[];
 }
+
+/**
+ * Result of a space access validation check.
+ */
+export interface SpaceAccessResult {
+  valid: boolean;
+  spaceName: string | undefined;
+  isOwner: boolean;
+}
+
+/**
+ * Computes the hoverchart cellId for a given [x, y, z] position.
+ * Uses CELL_SIZE = 6667 matching the hoverchart spatial partitioning service.
+ */
+export function computeCellId(position: number[]): string {
+  const [x = 0, y = 0, z = 0] = position;
+  return `${Math.floor(x / CELL_SIZE)},${Math.floor(y / CELL_SIZE)},${Math.floor(z / CELL_SIZE)}`;
+}
+
+/**
+ * Validates that the target space exists and the authenticated user has write
+ * access, using a pre-flight read against the Firestore REST API.
+ *
+ * Returns:
+ *   - `valid`     – whether the user may write to the space
+ *   - `spaceName` – human-readable name extracted from the space document
+ *   - `isOwner`   – whether the logged-in user owns the space
+ */
+export async function validateSpaceAccess(
+  idToken: string,
+  userId: string,
+  spaceOwnerId: string,
+  spaceId: string
+): Promise<SpaceAccessResult> {
+  const vsConfig = vscode.workspace.getConfiguration("hoverchart");
+  const projectId =
+    vsConfig.get<string>("firebaseProjectId") ?? "hoverchart";
+
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents` +
+    `/users/${spaceOwnerId}/spaces/${spaceId}`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+  } catch {
+    return { valid: false, spaceName: undefined, isOwner: false };
+  }
+
+  if (!res.ok) {
+    return { valid: false, spaceName: undefined, isOwner: false };
+  }
+
+  const doc = (await res.json()) as {
+    fields?: {
+      name?: { stringValue?: string };
+      ownerId?: { stringValue?: string };
+      sharedWith?: {
+        arrayValue?: {
+          values?: Array<{
+            mapValue?: {
+              fields?: { userId?: { stringValue?: string } };
+            };
+          }>;
+        };
+      };
+    };
+  };
+
+  const spaceName = doc.fields?.name?.stringValue;
+  const ownerId = doc.fields?.ownerId?.stringValue;
+  const isOwner = ownerId === userId;
+
+  if (isOwner) {
+    return { valid: true, spaceName, isOwner: true };
+  }
+
+  // Check whether the user appears in the sharedWith array
+  const sharedWith = doc.fields?.sharedWith?.arrayValue?.values ?? [];
+  const hasAccess = sharedWith.some(
+    (entry) => entry.mapValue?.fields?.userId?.stringValue === userId
+  );
+
+  return { valid: hasAccess, spaceName, isOwner: false };
+}
+
+/** Font sizes used in hoverchart TextObject styles. */
+const HEADER_FONT_SIZE = 2;
+const TEXT_FONT_SIZE = 32;
 
 /**
  * Converts an ordered list of PlanTasks into TextObjects arranged in a 3D
  * pipeline along the X axis and POSTs them to the hoverchart bulkImport Cloud
  * Function.
+ *
+ * Before exporting:
+ *   1. Reads config from `.github/hoverchart.json` or VS Code settings.
+ *   2. Validates the target space exists and the user has access.
+ *   3. Warns the user if the logged-in account differs from the space owner.
  */
 export async function exportTasks(
   context: vscode.ExtensionContext,
   tasks: PlanTask[],
   idToken: string
 ): Promise<void> {
-  const config = vscode.workspace.getConfiguration("hoverchart");
-  const spaceId = config.get<string>("spaceId") ?? "";
-  const spaceOwnerId = config.get<string>("spaceOwnerId") ?? "";
-
-  if (!spaceId || !spaceOwnerId) {
+  const cfg = getConfig();
+  if (!cfg) {
     throw new Error(
-      "hoverchart.spaceId and hoverchart.spaceOwnerId must be set in VS Code settings."
+      "Hoverchart is not configured. Run 'Hoverchart: Configure' to set up the target space."
     );
   }
 
-  // Arrange tasks in a 3D pipeline along the X axis with consistent spacing
-  const SPACING_X = 3;
+  const { spaceId, spaceOwnerId } = cfg;
+  const userId = await getUserId(context);
 
-  const objects: TextObject[] = tasks.map((task, arrayIndex) => ({
-    type: "TextObject",
-    text: `${task.index}. ${task.title}`,
-    description: task.description,
-    position: {
-      x: arrayIndex * SPACING_X,
-      y: 0,
-      z: 0,
-    },
-    index: task.index,
-  }));
+  if (!userId) {
+    throw new Error("Not logged in. Please run 'Hoverchart: Login' first.");
+  }
+
+  // Pre-flight: verify the space exists and the user can write to it
+  const access = await validateSpaceAccess(idToken, userId, spaceOwnerId, spaceId);
+  if (!access.valid) {
+    throw new Error(
+      `Cannot access hoverchart space "${spaceId}" owned by "${spaceOwnerId}". ` +
+        "The space may not exist, or you may not have write access."
+    );
+  }
+
+  // Warn when the logged-in user is not the space owner
+  if (spaceOwnerId !== userId) {
+    const warning = await vscode.window.showWarningMessage(
+      `You are logged in as ${userId} but the target space is owned by ${spaceOwnerId}. Continue?`,
+      "Yes",
+      "Re-configure",
+      "Cancel"
+    );
+    if (warning === "Re-configure") {
+      await vscode.commands.executeCommand("hoverchart.configure");
+      return;
+    }
+    if (warning !== "Yes") {
+      return;
+    }
+  }
+
+  // Scope object IDs to the workspace to prevent cross-project collisions
+  const workspaceFolderName =
+    vscode.workspace.workspaceFolders?.[0]?.name ?? "workspace";
+
+  // Arrange tasks in a 3D pipeline along the X axis
+  const SPACING_X = 40;
+
+  const objects: TextObject[] = tasks.map((task, arrayIndex) => {
+    const position = [arrayIndex * SPACING_X, 0, 0];
+    const cellId = computeCellId(position);
+    return {
+      id: `plan-${workspaceFolderName}-task-${task.index}`,
+      cellId,
+      position,
+      scale: [15, 10, 1],
+      type: "text",
+      color: "#ffffff",
+      content: task.description,
+      createdAt: Date.now(),
+      headerText: `${task.index}. ${task.title}`,
+      headerStyle: { fontSize: HEADER_FONT_SIZE, color: "black" },
+      textStyle: { fontSize: TEXT_FONT_SIZE, color: "black" },
+      merfolkData: {
+        planTaskIndex: task.index,
+        status: "queued",
+        githubIssueNumber: null,
+        githubPrNumber: null,
+      },
+    };
+  });
 
   const body: BulkImportRequest = {
     idToken,
+    userId,
     spaceId,
-    spaceOwnerId,
     objects,
+    connections: [],
   };
 
   const response = await fetch(BULK_IMPORT_URL, {
@@ -77,8 +233,6 @@ export async function exportTasks(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(
-      `bulkImport request failed (${response.status}): ${text}`
-    );
+    throw new Error(`bulkImport request failed (${response.status}): ${text}`);
   }
 }
