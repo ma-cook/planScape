@@ -2,8 +2,7 @@ import * as vscode from "vscode";
 import { PlanTask } from "./planParser.js";
 import { getUserId } from "./auth.js";
 import { getConfig } from "./config.js";
-
-const BULK_IMPORT_URL = "https://bulkimport-qtk2xsi74a-uc.a.run.app";
+import { BULK_IMPORT_URL, FIREBASE_PROJECT_ID } from "./constants.js";
 
 /** Hoverchart spatial partitioning cell size (matches src/services/spatialPartitioning.js). */
 const CELL_SIZE = 6667;
@@ -70,12 +69,8 @@ export async function validateSpaceAccess(
   spaceOwnerId: string,
   spaceId: string
 ): Promise<SpaceAccessResult> {
-  const vsConfig = vscode.workspace.getConfiguration("hoverchart");
-  const projectId =
-    vsConfig.get<string>("firebaseProjectId") ?? "hoverchart";
-
   const url =
-    `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents` +
+    `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents` +
     `/users/${spaceOwnerId}/spaces/${spaceId}`;
 
   let res: Response;
