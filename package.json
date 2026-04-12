@@ -1,8 +1,12 @@
 {
-  "name": "planeexport",
-  "displayName": "PlaneExport",
+  "name": "planScape",
+  "displayName": "PlanScape",
   "description": "Watches for plan files, parses them into ordered tasks, and exports them to a hoverchart GitHub Control Panel space.",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ma-cook/planScape"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

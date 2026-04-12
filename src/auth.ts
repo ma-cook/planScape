@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as http from "http";
 import * as crypto from "crypto";
 import { URL } from "url";
-import { FIREBASE_API_KEY, GOOGLE_OAUTH_CLIENT_ID } from "./constants.js";
+import { FIREBASE_API_KEY, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET } from "./constants.js";
 
 const SECRET_KEY_ID_TOKEN = "hoverchart.idToken";
 const SECRET_KEY_REFRESH_TOKEN = "hoverchart.refreshToken";
@@ -24,6 +24,13 @@ export async function login(context: vscode.ExtensionContext): Promise<void> {
 
   const state = crypto.randomBytes(16).toString("hex");
 
+  // PKCE: generate code_verifier and code_challenge
+  const codeVerifier = crypto.randomBytes(32).toString("base64url");
+  const codeChallenge = crypto
+    .createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
+
   // Build the Google OAuth URL
   const oauthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   oauthUrl.searchParams.set("client_id", clientId);
@@ -33,6 +40,8 @@ export async function login(context: vscode.ExtensionContext): Promise<void> {
   oauthUrl.searchParams.set("state", state);
   oauthUrl.searchParams.set("access_type", "offline");
   oauthUrl.searchParams.set("prompt", "consent");
+  oauthUrl.searchParams.set("code_challenge", codeChallenge);
+  oauthUrl.searchParams.set("code_challenge_method", "S256");
 
   // Start a temporary HTTP server to capture the OAuth redirect
   const code = await new Promise<string>((resolve, reject) => {
@@ -104,8 +113,10 @@ export async function login(context: vscode.ExtensionContext): Promise<void> {
     body: new URLSearchParams({
       code,
       client_id: clientId,
+      client_secret: GOOGLE_OAUTH_CLIENT_SECRET,
       redirect_uri: REDIRECT_URI,
       grant_type: "authorization_code",
+      code_verifier: codeVerifier,
     }).toString(),
   });
 
