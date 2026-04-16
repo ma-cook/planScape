@@ -11,3 +11,5 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 esbuild.js
+.env
+.env.example

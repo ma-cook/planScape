@@ -4,24 +4,16 @@ import { getUserId } from "./auth.js";
 import { getConfig } from "./config.js";
 import { BULK_IMPORT_URL, FIREBASE_PROJECT_ID } from "./constants.js";
 
-/** Hoverchart spatial partitioning cell size (matches src/services/spatialPartitioning.js). */
-const CELL_SIZE = 6667;
-
 /**
  * The shape of a single TextObject as expected by the bulkImport Cloud Function.
+ * Styling and positioning are handled by the hoverchart application.
  */
 interface TextObject {
   id: string;
-  cellId: string;
-  position: number[];
-  scale: number[];
   type: string;
-  color: string;
   content: string;
   createdAt: number;
   headerText?: string;
-  headerStyle?: object;
-  textStyle?: object;
   merfolkData?: object;
 }
 
@@ -43,15 +35,6 @@ export interface SpaceAccessResult {
   valid: boolean;
   spaceName: string | undefined;
   isOwner: boolean;
-}
-
-/**
- * Computes the hoverchart cellId for a given [x, y, z] position.
- * Uses CELL_SIZE = 6667 matching the hoverchart spatial partitioning service.
- */
-export function computeCellId(position: number[]): string {
-  const [x = 0, y = 0, z = 0] = position;
-  return `${Math.floor(x / CELL_SIZE)},${Math.floor(y / CELL_SIZE)},${Math.floor(z / CELL_SIZE)}`;
 }
 
 /**
@@ -119,14 +102,9 @@ export async function validateSpaceAccess(
   return { valid: hasAccess, spaceName, isOwner: false };
 }
 
-/** Font sizes used in hoverchart TextObject styles. */
-const HEADER_FONT_SIZE = 2;
-const TEXT_FONT_SIZE = 32;
-
 /**
- * Converts an ordered list of PlanTasks into TextObjects arranged in a 3D
- * pipeline along the X axis and POSTs them to the hoverchart bulkImport Cloud
- * Function.
+ * Converts an ordered list of PlanTasks into TextObjects and POSTs them to
+ * the hoverchart bulkImport Cloud Function.
  *
  * Before exporting:
  *   1. Reads config from `.github/hoverchart.json` or VS Code settings.
@@ -182,32 +160,19 @@ export async function exportTasks(
   const workspaceFolderName =
     vscode.workspace.workspaceFolders?.[0]?.name ?? "workspace";
 
-  // Arrange tasks in a 3D pipeline along the X axis
-  const SPACING_X = 40;
-
-  const objects: TextObject[] = tasks.map((task, arrayIndex) => {
-    const position = [arrayIndex * SPACING_X, 0, 0];
-    const cellId = computeCellId(position);
-    return {
-      id: `plan-${workspaceFolderName}-task-${task.index}`,
-      cellId,
-      position,
-      scale: [15, 10, 1],
-      type: "text",
-      color: "#ffffff",
-      content: task.description,
-      createdAt: Date.now(),
-      headerText: `${task.index}. ${task.title}`,
-      headerStyle: { fontSize: HEADER_FONT_SIZE, color: "black" },
-      textStyle: { fontSize: TEXT_FONT_SIZE, color: "black" },
-      merfolkData: {
-        planTaskIndex: task.index,
-        status: "queued",
-        githubIssueNumber: null,
-        githubPrNumber: null,
-      },
-    };
-  });
+  const objects: TextObject[] = tasks.map((task) => ({
+    id: `plan-${workspaceFolderName}-task-${task.index}`,
+    type: "text",
+    content: task.description,
+    createdAt: Date.now(),
+    headerText: `${task.index}. ${task.title}`,
+    merfolkData: {
+      planTaskIndex: task.index,
+      status: "queued",
+      githubIssueNumber: null,
+      githubPrNumber: null,
+    },
+  }));
 
   const body: BulkImportRequest = {
     idToken,
