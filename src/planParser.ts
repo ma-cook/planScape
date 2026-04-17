@@ -5,26 +5,22 @@ export interface PlanTask {
 }
 
 /**
- * Tries to extract a task index and title from an h2 heading line.
+ * Tries to match a phase heading (h2) with a number.
  *
  * Supported formats:
  *   - `## 1. Title`              → index 1, title "Title"
  *   - `## Phase 1: Title`        → index 1, title "Title"
  *   - `## Phase 1 — Title`       → index 1, title "Title"
- *   - `## Step 1: Title`         → index 1, title "Title"
- *   - `## Step 1 — Title`        → index 1, title "Title"
  *
- * Returns `null` if the line doesn't match any known pattern.
+ * Returns `null` if the line doesn't match.
  */
-function matchNumberedHeading(line: string): { index: number; title: string } | null {
-  // ## 1. Title
+function matchPhaseHeading(line: string): { index: number; title: string } | null {
   const dotMatch = line.match(/^##\s+(\d+)\.\s+(.+)$/);
   if (dotMatch) {
     return { index: parseInt(dotMatch[1], 10), title: dotMatch[2].trim() };
   }
 
-  // ## Phase 1: Title  /  ## Phase 1 — Title  /  ## Step 1: Title  /  ## Step 1 — Title
-  const labelledMatch = line.match(/^##\s+(?:Phase|Step)\s+(\d+)[\s]*[:—–\-]\s*(.+)$/i);
+  const labelledMatch = line.match(/^##\s+(?:Phase)\s+(\d+)[\s]*[:—–\-]\s*(.+)$/i);
   if (labelledMatch) {
     return { index: parseInt(labelledMatch[1], 10), title: labelledMatch[2].trim() };
   }
@@ -33,95 +29,100 @@ function matchNumberedHeading(line: string): { index: number; title: string } | 
 }
 
 /**
+ * Matches the `## Verification` heading (case-insensitive).
+ */
+function isVerificationHeading(line: string): boolean {
+  return /^##\s+Verification\s*$/i.test(line);
+}
+
+/**
  * Parses a markdown plan file into an ordered list of tasks.
  *
- * Tasks are identified by numbered h2 headings in several common formats
- * (see `matchNumberedHeading`). The description is the body text under each
- * heading until the next heading. Unnumbered h2 headings are skipped.
+ * Each numbered phase (h2) becomes a task whose title is the phase name.
+ * Everything under that phase — including h3 step headings, body text, and
+ * bullet points — forms the task description.
  *
- * Any content before the first numbered heading (e.g. TL;DR, Decisions) is
- * captured as preamble context and prepended to every task's description so
- * that each task is self-contained when sent on to GitHub.
+ * The Verification section (if present) is appended to the final task's
+ * description so that the last task carries the acceptance criteria.
+ *
+ * Non-phase h2 sections (e.g. Relevant Files, Decisions) are ignored.
  */
 export function parsePlan(markdown: string): PlanTask[] {
   const tasks: PlanTask[] = [];
-
-  // Split into lines for processing
   const lines = markdown.split(/\r?\n/);
 
-  // --- First pass: collect preamble (everything before the first numbered heading) ---
-  const preambleLines: string[] = [];
-  let firstTaskLineIndex = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (matchNumberedHeading(lines[i])) {
-      firstTaskLineIndex = i;
-      break;
-    }
-    // Skip the top-level h1 title — it's redundant as context
-    if (/^#\s/.test(lines[i])) {
-      continue;
-    }
-    preambleLines.push(lines[i]);
-  }
-
-  const preamble = preambleLines
-    .join("\n")
-    .replace(/^\n+|\n+$/g, "")
-    .replace(/^---+$/gm, "") // strip horizontal rules
-    .replace(/^\n+|\n+$/g, "")
-    .trimEnd();
-
-  // --- Second pass: parse numbered tasks ---
-  const taskLines = firstTaskLineIndex >= 0 ? lines.slice(firstTaskLineIndex) : [];
-
   let currentTask: PlanTask | null = null;
-  const descriptionLines: string[] = [];
+  let descriptionLines: string[] = [];
+  let verificationLines: string[] = [];
+  let inVerification = false;
 
   const flushCurrent = () => {
     if (currentTask !== null) {
-      const body = descriptionLines
+      currentTask.description = descriptionLines
         .join("\n")
         .replace(/^\n+|\n+$/g, "")
         .trimEnd();
-
-      currentTask.description = preamble
-        ? preamble + "\n\n---\n\n" + body
-        : body;
-
       tasks.push(currentTask);
+      currentTask = null;
+      descriptionLines = [];
     }
   };
 
-  for (const line of taskLines) {
-    const headingMatch = matchNumberedHeading(line);
+  for (const line of lines) {
+    // Check for h2 headings — they delimit phases and special sections
+    if (/^##\s/.test(line)) {
+      // End any in-progress phase or verification section
+      if (inVerification) {
+        inVerification = false;
+      } else {
+        flushCurrent();
+      }
 
-    if (headingMatch) {
-      // Save the previous task before starting a new one
-      flushCurrent();
-      descriptionLines.length = 0;
+      if (isVerificationHeading(line)) {
+        inVerification = true;
+        verificationLines = [];
+        continue;
+      }
 
-      currentTask = {
-        index: headingMatch.index,
-        title: headingMatch.title,
-        description: "",
-      };
-    } else if (/^#{1,6}\s/.test(line)) {
-      // Any other heading level terminates the current task description
-      // (but we don't start a new task)
-      flushCurrent();
-      descriptionLines.length = 0;
-      currentTask = null;
+      const phaseMatch = matchPhaseHeading(line);
+      if (phaseMatch) {
+        currentTask = {
+          index: phaseMatch.index,
+          title: phaseMatch.title,
+          description: "",
+        };
+        descriptionLines = [];
+      }
+      // Non-phase, non-verification h2s (Relevant Files, Decisions, etc.) are ignored
+      continue;
+    }
+
+    if (inVerification) {
+      verificationLines.push(line);
     } else if (currentTask !== null) {
       descriptionLines.push(line);
     }
   }
 
-  // Flush the last task
+  // Flush the last phase
   flushCurrent();
 
-  // Sort by task index to guarantee order
+  // Sort by phase index
   tasks.sort((a, b) => a.index - b.index);
+
+  // Append verification section to the final task
+  if (tasks.length > 0 && verificationLines.length > 0) {
+    const verification = verificationLines
+      .join("\n")
+      .replace(/^\n+|\n+$/g, "")
+      .trimEnd();
+    if (verification) {
+      const last = tasks[tasks.length - 1];
+      last.description = last.description
+        ? last.description + "\n\n---\n\n## Verification\n\n" + verification
+        : "## Verification\n\n" + verification;
+    }
+  }
 
   return tasks;
 }
